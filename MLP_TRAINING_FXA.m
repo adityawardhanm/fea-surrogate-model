@@ -23,19 +23,6 @@ y_test  = y(test(cv_holdout));
 
 fprintf('Training set: %d samples, Test set: %d samples\n\n', size(X_train,1), size(X_test,1));
 
-%% ARCHITECTURE DESIGN PHILOSOPHY
-fprintf('========================================\n');
-fprintf('WHY STRUCTURED ARCHITECTURES?\n');
-fprintf('========================================\n');
-fprintf('Problem: 4 inputs → 1 output, 1134 samples\n\n');
-fprintf('Bad approach (your BayesOpt result):\n');
-fprintf('  [109, 68, 124] → ~15,000 parameters\n');
-fprintf('  Only 0.08 samples per parameter → SEVERE OVERFIT!\n\n');
-fprintf('Good approach (constrained search):\n');
-fprintf('  [8-32] → [4-16] → reasonable parameter count\n');
-fprintf('  5-10 samples per parameter → healthy!\n');
-fprintf('========================================\n\n');
-
 %% DEFINE BAYESOPT SEARCH SPACE (CONSTRAINED)
 % This prevents crazy architectures like [109, 68, 124]
 
