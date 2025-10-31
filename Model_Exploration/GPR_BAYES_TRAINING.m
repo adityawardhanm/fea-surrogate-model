@@ -126,7 +126,7 @@ if ~exist(output_folder,'dir')
 end
 
 model_filename = fullfile(output_folder, ...
-    sprintf('best_gpr_%s_sigma%.2e.mat', char(best_params.KernelFunction), best_params.Sigma));
+    sprintf('best_gpr_model.mat'));
 
 % Store comprehensive results
 save(model_filename, 'best_gpr_model', 'best_params', 'results', ...
@@ -214,3 +214,26 @@ function rmse = gprObjective(params, X, y)
         fprintf('========================================\n');
     end
 end
+
+
+% ===== TRAIN METRICS =====
+% RMSE: 0.277
+% MAE: 0.221
+% R²: 1.000
+
+% ===== TEST METRICS =====
+% RMSE: 0.429
+% MAE: 0.349
+% R²: 1.000
+
+
+% FINAL TRAIN SET:
+%   RMSE: 0.467
+%   MAE:  0.334
+%   R²:   1.000
+
+% FINAL TEST SET:
+%   RMSE: 0.653
+%   MAE:  0.511
+%   R²:   0.999
+%   Normalized RMSE: 2.82% of std dev

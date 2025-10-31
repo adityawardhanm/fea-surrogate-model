@@ -1,5 +1,5 @@
-%% NN TRAINING WITH BAYESIAN OPTIMIZATION + DETAILED K-FOLD METRICS
-% Uses BayesOpt to find best architecture, with full metrics per fold
+%% NN TRAINING WITH BAYESIAN OPTIMIZATION + COMPLETE ANALYSIS
+% Uses BayesOpt to find best architecture, with full metrics and visualizations
 
 %% Load and prepare data
 data = load('cleaned_data.mat');
@@ -7,6 +7,7 @@ data = data.data;
 X = data{:, 1:end-1};  % 4 parameters
 y = data{:, end};       % Deformation
 n_samples = size(X, 1);
+feature_names = data.Properties.VariableNames(1:end-1);
 
 fprintf('Dataset: %d samples, %d features → 1 target\n', n_samples, size(X,2));
 fprintf('Target statistics: Min=%.3f, Max=%.3f, Mean=%.3f, Std=%.3f\n', ...
@@ -23,9 +24,17 @@ y_test  = y(test(cv_holdout));
 
 fprintf('Training set: %d samples, Test set: %d samples\n\n', size(X_train,1), size(X_test,1));
 
-%% DEFINE BAYESOPT SEARCH SPACE (CONSTRAINED)
-% This prevents crazy architectures like [109, 68, 124]
+%% Create output folders
+models_folder = '../fea-surrogate-model/Models';
+figures_folder = '../fea-surrogate-model/Figures';
+if ~exist(models_folder,'dir')
+    mkdir(models_folder);
+end
+if ~exist(figures_folder,'dir')
+    mkdir(figures_folder);
+end
 
+%% DEFINE BAYESOPT SEARCH SPACE (CONSTRAINED)
 optimVars = [
     % Number of hidden layers (2 or 3)
     optimizableVariable('NumLayers', [2, 3], 'Type', 'integer')
@@ -37,16 +46,14 @@ optimVars = [
     
     % Regularization
     optimizableVariable('L2Reg', [1e-5, 1e-2], 'Transform', 'log')
-    
-    % Activation function
-    optimizableVariable('Activation', {'tansig', 'logsig', 'poslin'}, 'Type', 'categorical')
 ];
 
-%% OBJECTIVE FUNCTION FOR BAYESOPT
-% This function runs 5-fold CV and returns mean RMSE
-% BayesOpt will call this function ~30 times with different hyperparameters
+% Fixed activation function (based on prior testing)
+fixed_activation = 'logsig';
 
-objectiveFcn = @(params) nnObjectiveWithDetailedMetrics(params, X_train, y_train);
+%% OBJECTIVE FUNCTION FOR BAYESOPT
+% Pass fixed_activation to objective function
+objectiveFcn = @(params) nnObjectiveWithDetailedMetrics(params, X_train, y_train, fixed_activation);
 
 %% RUN BAYESIAN OPTIMIZATION
 fprintf('========================================\n');
@@ -55,6 +62,7 @@ fprintf('========================================\n');
 fprintf('- Max evaluations: 30\n');
 fprintf('- Each evaluation runs 5-fold CV\n');
 fprintf('- Constrained architecture search\n');
+fprintf('- Activation function: %s (fixed)\n', fixed_activation);
 fprintf('- Random seed: 42\n\n');
 
 rng(42, 'twister');
@@ -79,7 +87,7 @@ if best_params.NumLayers == 3
     fprintf('Layer 3 Size: %d\n', best_params.Layer3Size);
 end
 fprintf('L2 Regularization: %.4e\n', best_params.L2Reg);
-fprintf('Activation: %s\n', char(best_params.Activation));
+fprintf('Activation: %s (fixed)\n', fixed_activation);
 fprintf('Best CV RMSE: %.4f\n', results_bayesopt.MinObjective);
 
 % Build layer array
@@ -123,9 +131,9 @@ for fold = 1:cv.NumTestSets
     % Create network
     net = feedforwardnet(layers, 'trainlm');
     
-    % Set activation
+    % Set activation to logsig (fixed)
     for lyr = 1:length(net.layers)-1
-        net.layers{lyr}.transferFcn = char(best_params.Activation);
+        net.layers{lyr}.transferFcn = fixed_activation;
     end
     
     % Training parameters
@@ -203,7 +211,7 @@ fprintf('========================================\n');
 net_final = feedforwardnet(layers, 'trainlm');
 
 for lyr = 1:length(net_final.layers)-1
-    net_final.layers{lyr}.transferFcn = char(best_params.Activation);
+    net_final.layers{lyr}.transferFcn = fixed_activation;
 end
 
 net_final.trainParam.epochs = 1000;
@@ -240,122 +248,281 @@ test_mae = mean(abs(y_test - y_pred_test));
 test_r2 = 1 - sum((y_test - y_pred_test).^2) / ...
               sum((y_test - mean(y_test)).^2);
 
-fprintf('\nFINAL TRAIN SET:\n');
-fprintf('  RMSE: %.3f\n', final_train_rmse);
-fprintf('  MAE:  %.3f\n', final_train_mae);
-fprintf('  R²:   %.3f\n', final_train_r2);
+fprintf('\n===== TRAIN METRICS =====\n');
+fprintf('RMSE: %.3f\n', final_train_rmse);
+fprintf('MAE:  %.3f\n', final_train_mae);
+fprintf('R²:   %.3f\n', final_train_r2);
 
-fprintf('\nFINAL TEST SET:\n');
-fprintf('  RMSE: %.3f\n', test_rmse);
-fprintf('  MAE:  %.3f\n', test_mae);
-fprintf('  R²:   %.3f\n', test_r2);
-fprintf('  Normalized RMSE: %.2f%% of std dev\n', (test_rmse / std(y_test)) * 100);
+fprintf('\n===== TEST METRICS =====\n');
+fprintf('RMSE: %.3f\n', test_rmse);
+fprintf('MAE:  %.3f\n', test_mae);
+fprintf('R²:   %.3f\n', test_r2);
+fprintf('Normalized RMSE: %.2f%% of std dev\n', (test_rmse / std(y_test)) * 100);
 
-%% COMPARISON WITH YOUR ORIGINAL RESULT
-fprintf('\n========================================\n');
-fprintf('COMPARISON: Constrained vs Unconstrained BayesOpt\n');
-fprintf('========================================\n');
-fprintf('YOUR ORIGINAL (Unconstrained):\n');
-fprintf('  Architecture: [109, 68, 124]\n');
-fprintf('  Parameters: ~15,000\n');
-fprintf('  CV RMSE: 12.205\n\n');
+%% ========================================
+%% REQUIRED: RESIDUAL ANALYSIS
+%% ========================================
+fprintf('\n========== RESIDUAL ANALYSIS ==========\n');
+residuals_train = y_train - y_pred_train_final;
+residuals_test = y_test - y_pred_test;
 
-fprintf('NEW (Constrained Search Space):\n');
-fprintf('  Architecture: %s\n', mat2str(layers));
-fprintf('  Parameters: %d\n', n_params);
-fprintf('  CV RMSE: %.3f\n', mean(val_rmse_all));
-fprintf('  Test RMSE: %.3f\n', test_rmse);
-
-if test_rmse < 12.205
-    improvement = (12.205 - test_rmse) / 12.205 * 100;
-    fprintf('\n✓ IMPROVED by %.1f%%!\n', improvement);
-else
-    fprintf('\n○ Similar performance but fewer parameters\n');
-end
-
-%% VISUALIZATION
 figure('Position', [100, 100, 1400, 900]);
 
-% Fold-by-fold metrics
-subplot(2, 3, 1);
+% Test Set Residuals
+subplot(2,3,1);
+scatter(y_pred_test, residuals_test, 50, 'filled', 'MarkerFaceAlpha', 0.6);
+hold on;
+yline(0, 'r--', 'LineWidth', 2);
+xlabel('Predicted Values');
+ylabel('Residuals');
+title('Test Set: Residuals vs Predicted');
+grid on;
+
+subplot(2,3,2);
+histogram(residuals_test, 30, 'Normalization', 'pdf', 'FaceColor', [0.2 0.6 0.8]);
+hold on;
+mu = mean(residuals_test);
+sigma = std(residuals_test);
+x_norm = linspace(min(residuals_test), max(residuals_test), 100);
+plot(x_norm, normpdf(x_norm, mu, sigma), 'r-', 'LineWidth', 2);
+xlabel('Residuals');
+ylabel('Density');
+title(sprintf('Test Set: Residual Distribution (μ=%.3f, σ=%.3f)', mu, sigma));
+legend('Residuals', 'Normal Fit');
+grid on;
+
+subplot(2,3,3);
+qqplot(residuals_test);
+title('Test Set: Q-Q Plot');
+grid on;
+
+% Train Set Residuals
+subplot(2,3,4);
+scatter(y_pred_train_final, residuals_train, 50, 'filled', 'MarkerFaceAlpha', 0.4);
+hold on;
+yline(0, 'r--', 'LineWidth', 2);
+xlabel('Predicted Values');
+ylabel('Residuals');
+title('Train Set: Residuals vs Predicted');
+grid on;
+
+subplot(2,3,5);
+histogram(residuals_train, 30, 'Normalization', 'pdf', 'FaceColor', [0.8 0.4 0.2]);
+hold on;
+mu_train = mean(residuals_train);
+sigma_train = std(residuals_train);
+x_norm_train = linspace(min(residuals_train), max(residuals_train), 100);
+plot(x_norm_train, normpdf(x_norm_train, mu_train, sigma_train), 'r-', 'LineWidth', 2);
+xlabel('Residuals');
+ylabel('Density');
+title(sprintf('Train Set: Residual Distribution (μ=%.3f, σ=%.3f)', mu_train, sigma_train));
+legend('Residuals', 'Normal Fit');
+grid on;
+
+subplot(2,3,6);
+qqplot(residuals_train);
+title('Train Set: Q-Q Plot');
+grid on;
+
+sgtitle('Residual Analysis', 'FontSize', 14, 'FontWeight', 'bold');
+saveas(gcf, fullfile(figures_folder, 'mlp_residual_analysis.png'));
+fprintf('Residual analysis plots saved.\n');
+
+%% ========================================
+%% REQUIRED: FEATURE IMPORTANCE (Permutation)
+%% ========================================
+fprintf('\n========== FEATURE IMPORTANCE ==========\n');
+
+% Compute permutation importance on test set
+baseline_rmse = test_rmse;
+feature_importance = zeros(length(feature_names), 1);
+
+for i = 1:length(feature_names)
+    X_test_permuted = X_test;
+    X_test_permuted(:, i) = X_test_permuted(randperm(size(X_test, 1)), i);
+    
+    y_pred_permuted = net_final(X_test_permuted')';
+    permuted_rmse = sqrt(mean((y_test - y_pred_permuted).^2));
+    
+    feature_importance(i) = permuted_rmse - baseline_rmse;
+end
+
+% Normalize
+feature_importance = max(feature_importance, 0); % Ensure non-negative
+feature_importance = feature_importance / sum(feature_importance);
+
+% Sort features by importance
+[importance_sorted, sort_idx] = sort(feature_importance, 'descend');
+features_sorted = feature_names(sort_idx);
+
+figure('Position', [100, 100, 1000, 600]);
+bar(importance_sorted, 'FaceColor', [0.2 0.6 0.8]);
+set(gca, 'XTick', 1:length(features_sorted), 'XTickLabel', features_sorted);
+xtickangle(45);
+ylabel('Importance Score');
+title('Feature Importance (Permutation Method)');
+grid on;
+saveas(gcf, fullfile(figures_folder, 'mlp_feature_importance.png'));
+
+fprintf('Top 5 most important features:\n');
+for i = 1:min(5, length(features_sorted))
+    fprintf('  %d. %s: %.4f\n', i, features_sorted{i}, importance_sorted(i));
+end
+
+%% ========================================
+%% REQUIRED: LEARNING CURVES
+%% ========================================
+fprintf('\n========== LEARNING CURVES ==========\n');
+
+figure('Position', [100, 100, 1400, 500]);
+
+% BayesOpt convergence
+subplot(1,3,1);
+plot(results_bayesopt.ObjectiveTrace, 'b-o', 'LineWidth', 2, 'MarkerSize', 6);
+xlabel('Bayesian Optimization Iteration');
+ylabel('CV RMSE');
+title('Hyperparameter Optimization Progress');
+grid on;
+
+% CV metrics across folds
+subplot(1,3,2);
 x_folds = 1:5;
 plot(x_folds, train_rmse_all, 'b-o', 'LineWidth', 2, 'MarkerSize', 8);
 hold on;
 plot(x_folds, val_rmse_all, 'r-s', 'LineWidth', 2, 'MarkerSize', 8);
-xlabel('Fold', 'FontSize', 11);
-ylabel('RMSE', 'FontSize', 11);
-title('K-Fold RMSE', 'FontSize', 11);
-legend('Train', 'Val', 'Location', 'best');
+xlabel('Fold Number');
+ylabel('RMSE');
+title('K-Fold Cross-Validation RMSE');
+legend('Train', 'Validation', 'Location', 'best');
 grid on;
 
-subplot(2, 3, 2);
-plot(x_folds, train_mae_all, 'b-o', 'LineWidth', 2, 'MarkerSize', 8);
-hold on;
-plot(x_folds, val_mae_all, 'r-s', 'LineWidth', 2, 'MarkerSize', 8);
-xlabel('Fold', 'FontSize', 11);
-ylabel('MAE', 'FontSize', 11);
-title('K-Fold MAE', 'FontSize', 11);
-legend('Train', 'Val', 'Location', 'best');
-grid on;
-
-subplot(2, 3, 3);
+% R² across folds
+subplot(1,3,3);
 plot(x_folds, train_r2_all, 'b-o', 'LineWidth', 2, 'MarkerSize', 8);
 hold on;
 plot(x_folds, val_r2_all, 'r-s', 'LineWidth', 2, 'MarkerSize', 8);
-xlabel('Fold', 'FontSize', 11);
-ylabel('R²', 'FontSize', 11);
-title('K-Fold R²', 'FontSize', 11);
-legend('Train', 'Val', 'Location', 'best');
+xlabel('Fold Number');
+ylabel('R²');
+title('K-Fold Cross-Validation R²');
+legend('Train', 'Validation', 'Location', 'best');
 grid on;
 
-% Test set predictions
-subplot(2, 3, 4);
-scatter(y_test, y_pred_test, 30, 'filled', 'MarkerFaceAlpha', 0.6);
-hold on;
-plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], ...
-    'r--', 'LineWidth', 2);
-xlabel('True Deformation', 'FontSize', 11);
-ylabel('Predicted Deformation', 'FontSize', 11);
-title(sprintf('Test Set (R²=%.3f)', test_r2), 'FontSize', 11);
-grid on;
+sgtitle('Learning Curves', 'FontSize', 14, 'FontWeight', 'bold');
+saveas(gcf, fullfile(figures_folder, 'mlp_learning_curves.png'));
+fprintf('Learning curves saved.\n');
 
-% Residuals
-subplot(2, 3, 5);
-residuals = y_test - y_pred_test;
-scatter(y_pred_test, residuals, 30, 'filled', 'MarkerFaceAlpha', 0.6);
-hold on;
-yline(0, 'r--', 'LineWidth', 2);
-xlabel('Predicted', 'FontSize', 11);
-ylabel('Residuals', 'FontSize', 11);
-title('Residual Plot', 'FontSize', 11);
-grid on;
+%% ========================================
+%% REQUIRED: PARTIAL DEPENDENCE PLOTS
+%% ========================================
+fprintf('\n========== PARTIAL DEPENDENCE PLOTS ==========\n');
 
-% BayesOpt progress
-subplot(2, 3, 6);
-plot(results_bayesopt.ObjectiveTrace, 'b-o', 'LineWidth', 2);
-xlabel('Iteration', 'FontSize', 11);
-ylabel('Objective (CV RMSE)', 'FontSize', 11);
-title('Bayesian Optimization Progress', 'FontSize', 11);
-grid on;
+% Plot PDPs for top 4 most important features
+num_pdp = min(4, length(features_sorted));
+figure('Position', [100, 100, 1200, 800]);
 
-%% SAVE EVERYTHING
-output_folder = '../fea-surrogate-model/Models';
-if ~exist(output_folder, 'dir')
-    mkdir(output_folder);
+for i = 1:num_pdp
+    feat_idx = sort_idx(i);
+    feat_name = features_sorted{i};
+    
+    subplot(2, 2, i);
+    
+    % Create PDP manually for neural network
+    x_range = linspace(min(X_train(:, feat_idx)), max(X_train(:, feat_idx)), 50);
+    pdp_values = zeros(size(x_range));
+    
+    for j = 1:length(x_range)
+        X_pdp = X_train;
+        X_pdp(:, feat_idx) = x_range(j);
+        y_pdp = net_final(X_pdp')';
+        pdp_values(j) = mean(y_pdp);
+    end
+    
+    plot(x_range, pdp_values, 'b-', 'LineWidth', 2);
+    xlabel(feat_name);
+    ylabel('Effect on Deformation (mm)');
+    title(sprintf('PDP: %s', feat_name));
+    grid on;
 end
 
-model_filename = fullfile(output_folder, 'nn_bayesopt_constrained.mat');
-save(model_filename, 'net_final', 'best_params', 'layers', ...
-    'results_bayesopt', 'cv_metrics', ...
-    'test_rmse', 'test_mae', 'test_r2', ...
-    'final_train_rmse', 'final_train_mae', 'final_train_r2');
+sgtitle('Partial Dependence Plots (Top 4 Features)', 'FontSize', 14, 'FontWeight', 'bold');
+saveas(gcf, fullfile(figures_folder, 'mlp_partial_dependence_plots.png'));
+fprintf('Partial dependence plots saved.\n');
 
+%% ========================================
+%% ADDITIONAL VISUALIZATIONS
+%% ========================================
+fprintf('\n========== ADDITIONAL VISUALIZATIONS ==========\n');
+
+figure('Position', [100, 100, 1400, 500]);
+
+% Predicted vs True (Test Set)
+subplot(1,3,1);
+scatter(y_test, y_pred_test, 50, 'filled', 'MarkerFaceAlpha', 0.6);
+hold on;
+plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], 'r--', 'LineWidth', 2);
+xlabel('True Deformation (mm)');
+ylabel('Predicted Deformation (mm)');
+title(sprintf('Test Set Predictions (R²=%.3f)', test_r2));
+grid on;
+axis equal;
+
+% Predicted vs True (Train Set)
+subplot(1,3,2);
+scatter(y_train, y_pred_train_final, 50, 'filled', 'MarkerFaceAlpha', 0.4);
+hold on;
+plot([min(y_train), max(y_train)], [min(y_train), max(y_train)], 'r--', 'LineWidth', 2);
+xlabel('True Deformation (mm)');
+ylabel('Predicted Deformation (mm)');
+title(sprintf('Train Set Predictions (R²=%.3f)', final_train_r2));
+grid on;
+axis equal;
+
+% Network Architecture Visualization
+subplot(1,3,3);
+view(net_final);
+title('Neural Network Architecture');
+
+sgtitle('Model Predictions and Architecture', 'FontSize', 14, 'FontWeight', 'bold');
+saveas(gcf, fullfile(figures_folder, 'mlp_predictions_and_architecture.png'));
+fprintf('Predictions and architecture plots saved.\n');
+
+%% ========================================
+%% SAVE MODEL AND ALL RESULTS
+%% ========================================
+fprintf('\n========== SAVING RESULTS ==========\n');
+
+model_filename = fullfile(models_folder, 'best_mlp_model.mat');
+save(model_filename, 'net_final', 'best_params', 'results_bayesopt', 'layers', 'fixed_activation', ...
+    'final_train_rmse', 'final_train_mae', 'final_train_r2', ...
+    'test_rmse', 'test_mae', 'test_r2', ...
+    'cv_metrics', 'train_rmse_all', 'val_rmse_all', ...
+    'feature_importance', 'feature_names', ...
+    'residuals_train', 'residuals_test');
+
+fprintf('Model and all metrics saved at: %s\n', model_filename);
+
+%% ========================================
+%% SUMMARY REPORT
+%% ========================================
 fprintf('\n========================================\n');
-fprintf('Model saved: %s\n', model_filename);
+fprintf('         TRAINING COMPLETE\n');
+fprintf('========================================\n');
+fprintf('Best Configuration:\n');
+fprintf('  - Architecture: %s\n', mat2str(layers));
+fprintf('  - Parameters: %d\n', n_params);
+fprintf('  - Activation: %s (fixed)\n', fixed_activation);
+fprintf('  - L2 Regularization: %.4e\n', best_params.L2Reg);
+fprintf('\nPerformance Metrics:\n');
+fprintf('  Train: RMSE=%.3f, MAE=%.3f, R²=%.3f\n', final_train_rmse, final_train_mae, final_train_r2);
+fprintf('  Test:  RMSE=%.3f, MAE=%.3f, R²=%.3f\n', test_rmse, test_mae, test_r2);
+fprintf('  CV:    RMSE=%.3f ± %.3f\n', mean(val_rmse_all), std(val_rmse_all));
+fprintf('\nTraining Time: %.2f seconds\n', final_train_time);
+fprintf('\nModel saved to: %s\n', models_folder);
+fprintf('Figures saved to: %s\n', figures_folder);
 fprintf('========================================\n');
 
 %% OBJECTIVE FUNCTION (CALLED BY BAYESOPT)
-function rmse = nnObjectiveWithDetailedMetrics(params, X, y)
+function rmse = nnObjectiveWithDetailedMetrics(params, X, y, fixed_activation)
     % Build layer array
     layers = [params.Layer1Size, params.Layer2Size];
     if params.NumLayers == 3
@@ -376,7 +543,7 @@ function rmse = nnObjectiveWithDetailedMetrics(params, X, y)
     fprintf('  Architecture: %s\n', mat2str(layers));
     fprintf('  Parameters: %d\n', n_params);
     fprintf('  L2 Reg: %.4e\n', params.L2Reg);
-    fprintf('  Activation: %s\n', char(params.Activation));
+    fprintf('  Activation: %s (fixed)\n', fixed_activation);
     fprintf('----------------------------------------\n');
     
     % 5-fold CV
@@ -396,7 +563,7 @@ function rmse = nnObjectiveWithDetailedMetrics(params, X, y)
             net = feedforwardnet(layers, 'trainlm');
             
             for lyr = 1:length(net.layers)-1
-                net.layers{lyr}.transferFcn = char(params.Activation);
+                net.layers{lyr}.transferFcn = fixed_activation;
             end
             
             net.trainParam.epochs = 500;
@@ -408,7 +575,7 @@ function rmse = nnObjectiveWithDetailedMetrics(params, X, y)
             net.divideParam.valRatio = 0.1;
             net.divideParam.testRatio = 0.0;
             
-            % Train (THIS IS THE TRAINING LOOP - hidden inside train())
+            % Train
             net = train(net, X_cv_train', y_cv_train');
             
             % Predict
