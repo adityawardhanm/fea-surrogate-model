@@ -1,4 +1,5 @@
 %% GPR_TRAINING_BAYESOPT.m
+% GPR_TRAINING USING BAYESIAN OPTIMIZATION AND FIVE-FOLD CROSS-VALIDATION AND FIVE KERNELS
 
 %% Load data
 data = load('cleaned_data.mat'); % Load cleaned dataset
@@ -17,45 +18,6 @@ X_test  = X(test(cv_holdout), :);
 y_test  = y(test(cv_holdout));
 
 fprintf('Training set: %d samples, Test set: %d samples\n', size(X_train,1), size(X_test,1));
-
-%% KERNEL FUNCTIONS EXPLANATION
-fprintf('\n========================================\n');
-fprintf('KERNEL FUNCTIONS BEING TESTED:\n');
-fprintf('========================================\n\n');
-
-fprintf('1. SQUARED EXPONENTIAL (RBF/Gaussian):\n');
-fprintf('   - Infinitely differentiable, very smooth predictions\n');
-fprintf('   - Best for: Smooth, continuous relationships in data\n');
-fprintf('   - Formula: k(x,x'') = exp(-||x-x''||^2 / (2*sigma^2))\n');
-fprintf('   - Use case: General-purpose, when you expect smooth trends\n\n');
-
-fprintf('2. MATERN 3/2:\n');
-fprintf('   - Once differentiable, moderately smooth\n');
-fprintf('   - Best for: Data with some roughness/noise\n');
-fprintf('   - Formula: k(x,x'') = (1 + sqrt(3)*r) * exp(-sqrt(3)*r)\n');
-fprintf('   - Use case: Engineering data with moderate noise\n\n');
-
-fprintf('3. MATERN 5/2:\n');
-fprintf('   - Twice differentiable, smoother than Matern 3/2\n');
-fprintf('   - Best for: Balance between smoothness and flexibility\n');
-fprintf('   - Formula: k(x,x'') = (1 + sqrt(5)*r + 5*r^2/3) * exp(-sqrt(5)*r)\n');
-fprintf('   - Use case: FEA/simulation data (RECOMMENDED for your case)\n\n');
-
-fprintf('4. EXPONENTIAL:\n');
-fprintf('   - Not differentiable, rough predictions\n');
-fprintf('   - Best for: Very noisy, irregular data\n');
-fprintf('   - Formula: k(x,x'') = exp(-||x-x''|| / sigma)\n');
-fprintf('   - Use case: High-frequency variations, signal processing\n\n');
-
-fprintf('5. RATIONAL QUADRATIC:\n');
-fprintf('   - Mixture of SE kernels, multi-scale modeling\n');
-fprintf('   - Best for: Data with features at multiple length scales\n');
-fprintf('   - Formula: k(x,x'') = (1 + ||x-x''||^2 / (2*alpha*sigma^2))^(-alpha)\n');
-fprintf('   - Use case: Complex systems with multiple characteristic scales\n\n');
-
-fprintf('For FEA surrogate modeling, Matern 5/2 is often optimal as it\n');
-fprintf('captures the smooth but not perfectly smooth nature of physical simulations.\n');
-fprintf('========================================\n\n');
 
 %% Setup for Bayesian Optimization
 % Define hyperparameters to optimize with MORE CONSERVATIVE bounds
